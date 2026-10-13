@@ -127,3 +127,9 @@ QR dinamis:
 5. Setelah callback masuk, speaker mengucapkan nominal dan layar menampilkan `Lunas`, lalu kembali ke QR statis.
 
 QR statis diuji dengan memindai payload di `STATIC_QR_STRING`. Notifikasinya harus masuk ke URL Midtrans di dashboard.
+
+## Lisensi
+
+MIT. Kode ini boleh dipakai, disalin, dan dikembangkan. Pemberitahuan hak cipta harus ikut pada salinan atau bagian yang berarti. Teks lengkapnya ada di `LICENSE`.
+
+Pustaka QR di `firmware/lib/qrcodegen` tetap berlisensi MIT milik Project Nayuki. Pemberitahuannya ada di berkas sumber itu.
