@@ -1,0 +1,8 @@
+node_modules/
+backend/data/
+backend/.env
+video/.env
+firmware/.pio/
+.pio/
+*.wav
+video/out/
