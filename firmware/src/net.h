@@ -5,6 +5,9 @@
 
 bool configReady();
 void loadConfig();
+void onLevels(void (*volume)(uint8_t), void (*light)(uint8_t));
+uint8_t volumePercent();
+uint8_t lightPercent();
 void handleSerial();
 void startPortal();
 void portalLoop();

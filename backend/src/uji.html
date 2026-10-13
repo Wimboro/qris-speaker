@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Uji speaker</title>
+  <style>
+    :root { color-scheme: light; }
+    body {
+      margin: 0;
+      font: 18px/1.4 "Iowan Old Style", Palatino, Georgia, serif;
+      background: #f4f0e6;
+      color: #1c1915;
+    }
+    main { max-width: 28rem; margin: 0 auto; padding: 2.5rem 1.25rem 3rem; }
+    h1 { font-size: 1.6rem; font-weight: 650; margin: 0 0 0.35rem; }
+    p { margin: 0 0 1.25rem; color: #514a40; }
+    label { display: block; font-size: 0.85rem; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 0.4rem; }
+    input {
+      width: 100%;
+      box-sizing: border-box;
+      font: 2rem/1 ui-monospace, "SF Mono", Menlo, monospace;
+      padding: 0.55rem 0.7rem;
+      border: 1px solid #c9bfae;
+      border-radius: 0.4rem;
+      background: #fffdf8;
+    }
+    .presets { display: flex; flex-wrap: wrap; gap: 0.45rem; margin: 0.8rem 0 1.1rem; }
+    button {
+      font: 1rem/1 system-ui, sans-serif;
+      border: 0;
+      border-radius: 999px;
+      padding: 0.45rem 0.8rem;
+      background: #e7e0d2;
+      cursor: pointer;
+    }
+    button.primary { background: #1c1915; color: #f4f0e6; padding: 0.75rem 1.2rem; }
+    button:disabled { opacity: 0.55; cursor: wait; }
+    #hasil { min-height: 4.5rem; margin-top: 1.25rem; white-space: pre-wrap; }
+    .ok { color: #1d6b3a; }
+    .wait { color: #8a5a12; }
+    .bad { color: #9d2c2c; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Uji speaker</h1>
+    <p>Layar perangkat harus di QR statis atau QR dinamis. Nominal ini tidak memotong saldo sungguhan. <a href="/perangkat">Kecerahan dan volume</a></p>
+    <form id="form">
+      <label for="amount">Nominal rupiah</label>
+      <input id="amount" name="amount" inputmode="numeric" autocomplete="off" value="24050" required>
+      <div class="presets">
+        <button type="button" data-amount="1">1</button>
+        <button type="button" data-amount="1000">1.000</button>
+        <button type="button" data-amount="24050">24.050</button>
+        <button type="button" data-amount="123500">123.500</button>
+      </div>
+      <button class="primary" type="submit">Bunyikan</button>
+    </form>
+    <div id="hasil" role="status"></div>
+  </main>
+  <script>
+    const form = document.querySelector("#form");
+    const amount = document.querySelector("#amount");
+    const hasil = document.querySelector("#hasil");
+    const submit = form.querySelector(".primary");
+    for (const button of document.querySelectorAll("[data-amount]")) {
+      button.addEventListener("click", () => { amount.value = button.dataset.amount; amount.focus(); });
+    }
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      submit.disabled = true;
+      hasil.className = "wait";
+      hasil.textContent = "Mengirim ke server…";
+      try {
+        const response = await fetch("/api/uji", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ amount: Number(amount.value) }),
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "gagal");
+        if (body.acked) {
+          hasil.className = "ok";
+          hasil.textContent = `Speaker selesai.\n${body.phrase}`;
+        } else if (body.queued) {
+          hasil.className = "wait";
+          hasil.textContent = `Pengumuman sudah antre, speaker belum selesai.\n${body.phrase}`;
+        } else {
+          hasil.className = "wait";
+          hasil.textContent = "Callback diterima, speaker belum mengambil. Buka layar QR statis atau dinamis.";
+        }
+      } catch (error) {
+        hasil.className = "bad";
+        hasil.textContent = error.message;
+      } finally {
+        submit.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

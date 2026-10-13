@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kecerahan dan volume</title>
+  <style>
+    :root { color-scheme: light; }
+    body {
+      margin: 0;
+      font: 18px/1.4 "Iowan Old Style", Palatino, Georgia, serif;
+      background: #f4f0e6;
+      color: #1c1915;
+    }
+    main { max-width: 28rem; margin: 0 auto; padding: 2.5rem 1.25rem 3rem; }
+    h1 { font-size: 1.6rem; font-weight: 650; margin: 0 0 0.35rem; }
+    a { color: #1c1915; }
+    p { margin: 0 0 1.25rem; color: #514a40; }
+    label { display: flex; justify-content: space-between; font-size: 0.95rem; margin: 1rem 0 0.35rem; }
+    input[type="range"] { width: 100%; accent-color: #1c1915; }
+    button {
+      font: 1rem/1 system-ui, sans-serif;
+      border: 0;
+      border-radius: 999px;
+      padding: 0.75rem 1.2rem;
+      background: #1c1915;
+      color: #f4f0e6;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.55; cursor: wait; }
+    #hasil { min-height: 3rem; margin-top: 1.25rem; white-space: pre-wrap; }
+    .ok { color: #1d6b3a; }
+    .wait { color: #8a5a12; }
+    .bad { color: #9d2c2c; }
+    fieldset { border: 0; margin: 1.2rem 0 0; padding: 0; }
+    fieldset:disabled { opacity: 0.45; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Kecerahan dan volume</h1>
+    <p>Colok USB speaker, lalu hubungkan. Pengaturan tersimpan di perangkat. <a href="/">Uji nominal</a></p>
+    <button id="connect" type="button">Hubungkan serial</button>
+    <fieldset id="levels" disabled>
+      <label>Kecerahan <span id="light-val">100</span></label>
+      <input id="light" type="range" min="1" max="100" value="100">
+      <label>Volume <span id="vol-val">100</span></label>
+      <input id="vol" type="range" min="0" max="100" value="100">
+    </fieldset>
+    <div id="hasil" role="status"></div>
+  </main>
+  <script>
+    const hasil = document.querySelector("#hasil");
+    const connect = document.querySelector("#connect");
+    const levels = document.querySelector("#levels");
+    const light = document.querySelector("#light");
+    const vol = document.querySelector("#vol");
+    let port = null;
+    let closing = false;
+    let reader = null;
+    let writer = null;
+    let pending = null;
+    let buffer = "";
+
+    function show(className, text) {
+      hasil.className = className;
+      hasil.textContent = text;
+    }
+
+    function onLine(line) {
+      if (pending) pending(line);
+    }
+
+    async function readLoop() {
+      const decoder = new TextDecoder();
+      while (port && port.readable) {
+        reader = port.readable.getReader();
+        try {
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) return;
+            buffer += decoder.decode(value, { stream: true });
+            let nl;
+            while ((nl = buffer.indexOf("\n")) >= 0) {
+              const line = buffer.slice(0, nl).replace(/\r$/, "").trim();
+              buffer = buffer.slice(nl + 1);
+              if (line) onLine(line);
+            }
+          }
+        } catch (error) {
+          if (!closing && port) show("bad", error.message);
+          return;
+        } finally {
+          reader.releaseLock();
+          reader = null;
+        }
+      }
+    }
+
+    function waitFor(pred, ms) {
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          pending = null;
+          reject(new Error("Speaker tidak menjawab. Flash firmware terbaru, lalu coba lagi."));
+        }, ms);
+        pending = (line) => {
+          if (!pred(line)) return;
+          clearTimeout(timer);
+          pending = null;
+          resolve(line);
+        };
+      });
+    }
+
+    async function send(line) {
+      const encoder = new TextEncoder();
+      await writer.write(encoder.encode(line + "\n"));
+    }
+
+    async function refresh() {
+      const deadline = Date.now() + 20000;
+      let sawOld = false;
+      while (Date.now() < deadline) {
+        const lines = [];
+        const done = waitFor((line) => {
+          lines.push(line);
+          return line === "END";
+        }, 1200);
+        try {
+          await send("STATUS");
+          await done;
+          for (const line of lines) {
+            if (line.startsWith("vol ")) vol.value = line.slice(4);
+            if (line.startsWith("light ")) light.value = line.slice(6);
+          }
+          document.querySelector("#vol-val").textContent = vol.value;
+          document.querySelector("#light-val").textContent = light.value;
+          return;
+        } catch (error) {
+          if (lines.some((line) => line.startsWith("ssid "))) sawOld = true;
+          else show("wait", "Speaker menyala ulang…");
+        }
+      }
+      if (sawOld) {
+        throw new Error("Firmware di speaker belum punya volume. Flash esp32s3-kata yang baru, lalu hubungkan lagi.");
+      }
+      throw new Error("Speaker tidak menjawab. Tutup serial monitor lain, lalu hubungkan lagi.");
+    }
+
+    async function push(kind, input, okText) {
+      const value = input.value;
+      try {
+        const reply = waitFor((line) => line === okText, 1500);
+        await send(`${kind}=${value}`);
+        await reply;
+        show("ok", "Tersimpan di speaker.");
+      } catch (error) {
+        show("bad", error.message);
+      }
+    }
+
+    light.addEventListener("input", () => {
+      document.querySelector("#light-val").textContent = light.value;
+    });
+    vol.addEventListener("input", () => {
+      document.querySelector("#vol-val").textContent = vol.value;
+    });
+    light.addEventListener("change", () => push("LIGHT", light, "OK LIGHT"));
+    vol.addEventListener("change", () => push("VOL", vol, "OK VOL"));
+
+    connect.addEventListener("click", async () => {
+      if (!navigator.serial) {
+        show("bad", "Browser ini tidak punya serial. Buka halaman di Chrome.");
+        return;
+      }
+      try {
+        if (port) {
+          closing = true;
+          if (reader) await reader.cancel();
+          await port.close();
+          port = null;
+          writer = null;
+          levels.disabled = true;
+          connect.textContent = "Hubungkan serial";
+          closing = false;
+          show("", "");
+          return;
+        }
+        port = await navigator.serial.requestPort();
+        await port.open({ baudRate: 115200 });
+        writer = port.writable.getWriter();
+        levels.disabled = false;
+        connect.textContent = "Putuskan";
+        show("wait", "Membaca pengaturan…");
+        readLoop();
+        await refresh();
+        show("ok", "Terhubung.");
+      } catch (error) {
+        show("bad", error.message || "Serial dibatalkan.");
+      }
+    });
+  </script>
+</body>
+</html>

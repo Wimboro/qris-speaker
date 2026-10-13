@@ -77,9 +77,13 @@ cd backend && npm test
 
 Colok speaker ke soket horn 1.25 mm (maksimum 1,5 W pada 8 ohm). Port USB yang terdeteksi di mesin ini: `/dev/ttyACM0`.
 
+Dua firmware, pilih saat flash. `esp32s3` mengunduh WAV dari server. `esp32s3-kata` merangkai bank kata di flash, tanpa TTS. Suara bawaan kata adalah Rowosari. `esp32s3-kata-bank` memakai bank kata yang lama. Layar, Wi-Fi, dan polling pembayaran sama.
+
 ```bash
 cd firmware
-pio run -t upload --upload-port /dev/ttyACM0
+pio run -e esp32s3 -t upload --upload-port /dev/ttyACM0
+pio run -e esp32s3-kata -t upload --upload-port /dev/ttyACM0
+pio run -e esp32s3-kata-bank -t upload --upload-port /dev/ttyACM0
 pio device monitor -p /dev/ttyACM0
 ```
 
@@ -98,7 +102,11 @@ APPLY
 
 `HOST` sama dengan `PUBLIC_BASE_URL`, tanpa path dan tanpa garis miring di akhir. Perangkat memakai HTTPS tanpa memeriksa sertifikat server.
 
-Layar awal menampilkan QR statis. Tombol **Nominal** membuka keypad. **Bayar** meminta QR dinamis. **Batal** kembali ke QR statis. Pembayaran yang sudah terlanjur discan tetap diumumkan.
+Layar awal menampilkan QR statis. Tombol **Nominal** membuka keypad. **Bayar** meminta QR dinamis. **Batal** kembali ke QR statis. Ketukan ganda di layar utama mematikan lampu layar, ketukan ganda lagi menyalakannya. Di keypad dan QR dinamis ketukan langsung masuk. Pembayaran yang masuk menyalakan layar kembali. Pembayaran yang sudah terlanjur discan tetap diumumkan.
+
+## Uji suara
+
+`cd backend && npm run uji` membuka `http://127.0.0.1:3040` di mesin ini saja. Isi nominal lalu tekan Bunyikan. Server yang sedang berjalan menerima callback, dan speaker berbunyi bila layar ada di QR statis atau QR dinamis. Halaman `/perangkat` mengatur kecerahan dan volume lewat USB serial, setelah firmware yang mendukung `VOL` dan `LIGHT` terpasang.
 
 ## Uji sandbox
 

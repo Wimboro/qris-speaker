@@ -1,5 +1,6 @@
 #include "audio.h"
 
+#include <cstring>
 #include <driver/i2s.h>
 #include <Wire.h>
 #include "pins.h"
@@ -24,12 +25,20 @@ static const uint8_t REG_DAC32 = 0x32;
 static const uint8_t REG_DAC37 = 0x37;
 
 static bool i2sReady = false;
+static uint8_t volumeReg = 0xD8;
 
 static void writeReg(uint8_t reg, uint8_t value) {
   Wire.beginTransmission(ES8311_ADDR);
   Wire.write(reg);
   Wire.write(value);
   Wire.endTransmission();
+}
+
+void audioSetVolume(uint8_t percent) {
+  if (percent > 100) percent = 100;
+  // 0 bisu. 1..100 = 0xBF (0 dB) .. 0xD8 (+12.5 dB), 0.5 dB per langkah.
+  volumeReg = percent == 0 ? 0 : 0xBF + (uint16_t)percent * (0xD8 - 0xBF) / 100;
+  writeReg(REG_DAC32, volumeReg);
 }
 
 static void codecOn() {
@@ -55,7 +64,7 @@ static void codecOn() {
   writeReg(REG_SYS13, 0x10);
   writeReg(REG_DAC37, 0x08);
   writeReg(REG_DAC31, 0x00);
-  writeReg(REG_DAC32, 0xC8);
+  writeReg(REG_DAC32, volumeReg);
 }
 
 static void codecOff() {
@@ -65,11 +74,10 @@ static void codecOff() {
 }
 
 struct WavPcm {
-  const int16_t* samples;
+  const uint8_t* pcm;
   size_t frames;
   int channels;
   int rate;
-  int bits;
 };
 
 static bool parseWav(const uint8_t* data, size_t len, WavPcm& out) {
@@ -98,13 +106,34 @@ static bool parseWav(const uint8_t* data, size_t len, WavPcm& out) {
     off += 8 + size + (size & 1);
   }
   if (!pcm || bits != 16 || channels < 1 || rate < 8000) return false;
-  if (((uintptr_t)pcm) & 1) return false;
-  out.samples = (const int16_t*)pcm;
+  out.pcm = pcm;
   out.frames = pcmBytes / (size_t)(2 * channels);
   out.channels = channels;
   out.rate = rate;
-  out.bits = bits;
   return out.frames > 0;
+}
+
+static int16_t sampleAt(const WavPcm& wav, size_t frame) {
+  int16_t sample = 0;
+  memcpy(&sample, wav.pcm + frame * (size_t)wav.channels * 2, 2);
+  return sample;
+}
+
+static void writeWav(const WavPcm& wav) {
+  int16_t chunk[256];
+  size_t frame = 0;
+  while (frame < wav.frames) {
+    size_t count = wav.frames - frame;
+    if (count > 128) count = 128;
+    for (size_t i = 0; i < count; i++) {
+      int16_t sample = sampleAt(wav, frame + i);
+      chunk[i * 2] = sample;
+      chunk[i * 2 + 1] = sample;
+    }
+    size_t written = 0;
+    i2s_write(I2S_NUM_0, chunk, count * 4, &written, portMAX_DELAY);
+    frame += count;
+  }
 }
 
 void audioBegin() {
@@ -137,32 +166,33 @@ void audioBegin() {
   if (i2sReady) i2s_stop(I2S_NUM_0);
 }
 
-bool playWav(const uint8_t* data, size_t len) {
-  WavPcm wav;
-  if (!i2sReady || !parseWav(data, len, wav)) return false;
+bool playWavs(const uint8_t* const* clips, const size_t* lengths, size_t count) {
+  if (!i2sReady || count == 0) return false;
+  WavPcm first;
+  if (!parseWav(clips[0], lengths[0], first)) return false;
   codecOn();
-  i2s_set_clk(I2S_NUM_0, wav.rate, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_STEREO);
+  i2s_set_clk(I2S_NUM_0, first.rate, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_STEREO);
   i2s_zero_dma_buffer(I2S_NUM_0);
   i2s_start(I2S_NUM_0);
-
-  int16_t chunk[256];
-  size_t frame = 0;
-  while (frame < wav.frames) {
-    size_t count = wav.frames - frame;
-    if (count > 128) count = 128;
-    for (size_t i = 0; i < count; i++) {
-      int16_t sample = wav.samples[(frame + i) * wav.channels];
-      chunk[i * 2] = sample;
-      chunk[i * 2 + 1] = sample;
+  bool ok = true;
+  for (size_t i = 0; i < count; i++) {
+    WavPcm wav = first;
+    if (i > 0 && !parseWav(clips[i], lengths[i], wav)) {
+      ok = false;
+      break;
     }
-    size_t written = 0;
-    i2s_write(I2S_NUM_0, chunk, count * 4, &written, portMAX_DELAY);
-    frame += count;
+    if (wav.rate != first.rate) {
+      i2s_set_clk(I2S_NUM_0, wav.rate, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_STEREO);
+    }
+    writeWav(wav);
   }
-
   i2s_zero_dma_buffer(I2S_NUM_0);
   delay(60);
   i2s_stop(I2S_NUM_0);
   codecOff();
-  return true;
+  return ok;
+}
+
+bool playWav(const uint8_t* data, size_t len) {
+  return playWavs(&data, &len, 1);
 }

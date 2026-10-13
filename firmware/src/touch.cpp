@@ -40,8 +40,6 @@ bool readTouch(int& x, int& y) {
   for (int i = 0; i < 4; i++) data[i] = Wire.read();
   x = ((data[0] & 0x0F) << 8) | data[1];
   y = ((data[2] & 0x0F) << 8) | data[3];
-  x = (SCREEN_W - 1) - x;
-  y = (SCREEN_H - 1) - y;
   if (x < 0 || y < 0 || x >= SCREEN_W || y >= SCREEN_H) return false;
   return true;
 }

@@ -3,6 +3,9 @@ backend/data/
 backend/.env
 video/.env
 firmware/.pio/
+firmware/.voice/
 .pio/
 *.wav
+!firmware/bank/*.wav
+!firmware/voices/rowosari/*.wav
 video/out/

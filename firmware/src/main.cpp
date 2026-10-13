@@ -3,6 +3,7 @@
 #include <cstring>
 
 #include "audio.h"
+#include "bank.h"
 #include "display.h"
 #include "led.h"
 #include "net.h"
@@ -18,8 +19,30 @@ static String dynQr;
 static String dynOrder;
 static int dynAmount = 0;
 static uint32_t lastPoll = 0;
-static uint32_t lastTap = 0;
 static bool touching = false;
+static bool screenOn = true;
+static bool tapPending = false;
+static int pendingX = 0;
+static int pendingY = 0;
+static uint32_t pendingAt = 0;
+
+static uint8_t savedLight = 100;
+static const uint8_t SCREEN_BRIGHT = 200;
+static const uint32_t TAP_GAP_MIN = 80;
+static const uint32_t TAP_GAP_MAX = 380;
+static const uint32_t TAP_DEBOUNCE = 180;
+
+static void applyLight(uint8_t percent) {
+  if (percent < 1) percent = 1;
+  if (percent > 100) percent = 100;
+  savedLight = percent;
+  if (screenOn) lcd.setBrightness((uint16_t)savedLight * SCREEN_BRIGHT / 100);
+}
+
+static void setScreen(bool on) {
+  screenOn = on;
+  lcd.setBrightness(on ? (uint16_t)savedLight * SCREEN_BRIGHT / 100 : 0);
+}
 
 static void enterStatic() {
   mode = Mode::StaticQr;
@@ -43,6 +66,8 @@ static void enterDynamic() {
 }
 
 static void showFailure(int amount) {
+  tapPending = false;
+  setScreen(true);
   ledFailed();
   drawResult(false, amount);
   delay(1600);
@@ -53,11 +78,18 @@ static void speakOne(JsonVariant ann) {
   String orderId = ann["order_id"] | "";
   int amount = ann["amount"] | 0;
   int id = ann["id"] | 0;
-  const char* audio = ann["audio_url"] | "";
   bool sameOrder = mode == Mode::Dynamic && orderId == dynOrder;
   bool known = heard(orderId);
+  tapPending = false;
+  setScreen(true);
   ledPaid();
   drawResult(true, amount);
+#if WORD_BANK
+  if (!known && speakAmount(amount)) {
+    markHeard(orderId);
+  } else if (!known) {
+#else
+  const char* audio = ann["audio_url"] | "";
   if (!known && audio && audio[0]) {
     size_t len = 0;
     uint8_t* wav = fetchAudio(audio, &len);
@@ -69,6 +101,7 @@ static void speakOne(JsonVariant ann) {
     }
     markHeard(orderId);
   } else if (!known) {
+#endif
     delay(1200);
     markHeard(orderId);
   }
@@ -141,16 +174,22 @@ static void onTap(int x, int y) {
 void setup() {
   Serial.begin(115200);
   delay(300);
+  handleSerial();
   Serial.println("QRIS Speaker");
   lcd.init();
-  lcd.setRotation(0);
-  lcd.setBrightness(200);
+  lcd.setRotation(2);
+  setScreen(true);
   uiBegin();
   drawConnecting("Menyiapkan");
   touchBegin();
+  handleSerial();
   audioBegin();
   ledBegin();
   loadConfig();
+  handleSerial();
+  onLevels(audioSetVolume, applyLight);
+  audioSetVolume(volumePercent());
+  applyLight(lightPercent());
   if (!configReady()) {
     startPortal();
     ledSetup();
@@ -183,11 +222,31 @@ void loop() {
     int x = 0;
     int y = 0;
     bool down = readTouch(x, y);
-    if (down && !touching && millis() - lastTap > 180) {
-      lastTap = millis();
-      onTap(x, y);
+    if (down && !touching) {
+      uint32_t now = millis();
+      if (mode == Mode::StaticQr) {
+        uint32_t gap = now - pendingAt;
+        if (tapPending && gap >= TAP_GAP_MIN && gap <= TAP_GAP_MAX) {
+          tapPending = false;
+          setScreen(!screenOn);
+        } else if (!tapPending || gap > TAP_GAP_MAX) {
+          if (tapPending && screenOn) onTap(pendingX, pendingY);
+          pendingX = x;
+          pendingY = y;
+          pendingAt = now;
+          tapPending = true;
+        }
+      } else if (screenOn && now - pendingAt > TAP_DEBOUNCE) {
+        pendingAt = now;
+        tapPending = false;
+        onTap(x, y);
+      }
     }
     touching = down;
+    if (mode == Mode::StaticQr && tapPending && millis() - pendingAt > TAP_GAP_MAX) {
+      tapPending = false;
+      if (screenOn) onTap(pendingX, pendingY);
+    }
   }
 
   if ((mode == Mode::StaticQr || mode == Mode::Dynamic) && millis() - lastPoll > 2000) {

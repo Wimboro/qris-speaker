@@ -13,6 +13,10 @@ static String cfgSsid;
 static String cfgPass;
 static String cfgHost;
 static String cfgToken;
+static uint8_t cfgVol = 100;
+static uint8_t cfgLight = 100;
+static void (*levelVolume)(uint8_t) = nullptr;
+static void (*levelLight)(uint8_t) = nullptr;
 static bool apOn = false;
 static String serialLine;
 
@@ -70,7 +74,25 @@ void loadConfig() {
   cfgPass = prefs.getString("pass", "");
   cfgHost = prefs.getString("host", "");
   cfgToken = prefs.getString("token", "");
+  cfgVol = prefs.getUChar("vol", 100);
+  cfgLight = prefs.getUChar("light", 100);
+  if (cfgVol > 100) cfgVol = 100;
+  if (cfgLight < 1 || cfgLight > 100) cfgLight = 100;
   trimHost(cfgHost);
+}
+
+void onLevels(void (*volume)(uint8_t), void (*light)(uint8_t)) {
+  levelVolume = volume;
+  levelLight = light;
+}
+
+uint8_t volumePercent() { return cfgVol; }
+uint8_t lightPercent() { return cfgLight; }
+
+static uint8_t clampLevel(int value, uint8_t low) {
+  if (value < low) return low;
+  if (value > 100) return 100;
+  return (uint8_t)value;
 }
 
 bool configReady() {
@@ -106,12 +128,24 @@ static void applyLine(String line) {
     Serial.println("Menyala ulang");
     delay(200);
     ESP.restart();
+  } else if (line.startsWith("VOL=")) {
+    cfgVol = clampLevel(line.substring(4).toInt(), 0);
+    prefs.putUChar("vol", cfgVol);
+    if (levelVolume) levelVolume(cfgVol);
+    Serial.println("OK VOL");
+  } else if (line.startsWith("LIGHT=")) {
+    cfgLight = clampLevel(line.substring(6).toInt(), 1);
+    prefs.putUChar("light", cfgLight);
+    if (levelLight) levelLight(cfgLight);
+    Serial.println("OK LIGHT");
   } else if (line == "STATUS") {
-    Serial.printf("ssid %s\nhost %s\ntoken %s\nwifi %s\n",
+    Serial.printf("ssid %s\nhost %s\ntoken %s\nwifi %s\nvol %u\nlight %u\nEND\n",
                   cfgSsid.c_str(),
                   cfgHost.c_str(),
                   cfgToken.length() ? "ada" : "kosong",
-                  wifiUp() ? "nyambung" : "putus");
+                  wifiUp() ? "nyambung" : "putus",
+                  cfgVol,
+                  cfgLight);
   }
 }
 
