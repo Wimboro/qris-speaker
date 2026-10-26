@@ -2,17 +2,17 @@
 
 Speaker kasir untuk QRIS. Layar menampilkan kode QR. Setelah uang masuk, speaker mengucapkan nominalnya.
 
-Board-nya LCDWiki 2.8 inci, ESP32-S3 (ES3C28P). Server-nya Node.js. API key Midtrans, Duitku, dan QiosPay tinggal di server. Device hanya menyimpan host dan satu token.
+Board-nya LCDWiki 2.8 inci, ESP32-S3 (ES3C28P). Ada juga papan ESP32-C3 yang hanya mengumumkan pembayaran, tanpa layar QR. Server-nya Node.js. API key Midtrans, Duitku, dan QiosPay tinggal di server. Device hanya menyimpan host dan satu token.
 
-Ada dua payment provider. Default: QR dinamis lewat Duitku, notification QR statis GoPay lewat Midtrans. Kalau `PAYMENT_PROVIDER=qiospay`, keduanya pindah ke QiosPay. Firmware tidak berubah.
+Ada tiga payment provider. Default-nya Midtrans: QR dinamis lewat Core API (`payment_type: qris`, acquirer GoPay), notification QR statis GoPay masuk ke URL yang sama. `PAYMENT_PROVIDER=duitku` memakai inquiry Duitku untuk QR dinamis, notification QR statis tetap Midtrans. `PAYMENT_PROVIDER=qiospay` memindahkan QR dinamis dan notifikasi ke QiosPay. Firmware tidak berubah.
 
 ## Yang perlu ada
 
-- Board ES3C28P. Speaker dicolok ke soket horn 1,25 mm, paling besar 1,5 W pada 8 ohm.
+- Board ES3C28P. Speaker dicolok ke soket horn 1,25 mm, paling besar 1,5 W pada 8 ohm. Atau ESP32-C3 SuperMini dengan OLED dan amplifier I2S, kalau hanya perlu pengumuman.
 - Node.js 22 atau lebih baru.
 - `ffmpeg`, hanya kalau TTS membalas MP3. File WAV yang sudah jadi dipakai apa adanya.
 - PlatformIO, untuk upload firmware.
-- Akun Duitku plus Midtrans, atau akun QiosPay. Pilih satu provider, jangan diisi dua-duanya.
+- Akun Midtrans. Atau akun Duitku plus Midtrans. Atau akun QiosPay. Pilih satu provider.
 
 ## Server
 
@@ -37,11 +37,22 @@ Order dan file audio tersimpan di `backend/data/`. Folder itu tidak ikut git. Ha
 | `PORT` | Boleh dikosongkan. Default `3000` |
 | `STATIC_QR_STRING` | Payload QR yang tampil di layar |
 
-Untuk Duitku dan Midtrans, string itu dari menu Manage Static QRIS. Untuk QiosPay, dari dashboard QRIS Toko. Di provider QiosPay string ini wajib dan harus memuat `5802ID`. Di provider Duitku server tetap jalan kalau kosong, tapi layar hanya menampilkan tulisan QR statis kosong.
+Untuk Midtrans dan Duitku, string itu dari menu Manage Static QRIS. Untuk QiosPay, dari dashboard QRIS Toko. Di provider QiosPay string ini wajib dan harus memuat `5802ID`. Di provider Midtrans dan Duitku server tetap jalan kalau kosong, tapi layar hanya menampilkan tulisan QR statis kosong.
 
-### Duitku dan Midtrans
+### Midtrans
 
-Kosongkan `PAYMENT_PROVIDER`, atau isi `duitku`.
+Kosongkan `PAYMENT_PROVIDER`, atau isi `midtrans`.
+
+| Env | Isi |
+|---|---|
+| `MIDTRANS_SERVER_KEY` | Server Key sandbox atau production |
+| `MIDTRANS_IS_PRODUCTION` | `false` untuk sandbox, `true` untuk production |
+
+Yang wajib: `DEVICE_TOKEN`, `PUBLIC_BASE_URL`, dan `MIDTRANS_SERVER_KEY`.
+
+### Duitku
+
+`PAYMENT_PROVIDER=duitku`. QR dinamis lewat Duitku, notification QR statis tetap Midtrans.
 
 | Env | Isi |
 |---|---|
@@ -64,9 +75,11 @@ Kosongkan `PAYMENT_PROVIDER`, atau isi `duitku`.
 | `QIOSPAY_API_KEY` | API key di menu yang sama |
 | `QIOSPAY_CALLBACK_SECRET` | Secret yang Anda tentukan sendiri. Menjadi path segment terakhir pada URL callback |
 
+Yang wajib: `DEVICE_TOKEN`, `PUBLIC_BASE_URL`, `STATIC_QR_STRING`, `QIOSPAY_MERCHANT_CODE`, `QIOSPAY_API_KEY`, dan `QIOSPAY_CALLBACK_SECRET`.
+
 ### TTS
 
-Hanya firmware `esp32s3` yang download WAV dari server. Dua firmware kata merangkai audio dari flash, jadi bagian ini boleh dikosongkan.
+Hanya firmware `esp32s3` yang download WAV dari server. Firmware kata merangkai audio dari flash, jadi bagian ini boleh dikosongkan.
 
 | Env | Isi |
 |---|---|
@@ -89,7 +102,18 @@ Di dashboard, Settings, Payment Notification URL:
 https://toko.example.com/midtrans/notification
 ```
 
-Ini untuk pembayaran QR statis GoPay. Server menolak notification yang signature-nya tidak cocok: SHA512 dari `order_id`, `status_code`, `gross_amount`, dan Server Key. Announcement hanya dibuat kalau `transaction_status` bernilai `settlement` dan `fraud_status` bernilai `accept`.
+URL itu menerima pembayaran QR statis GoPay dan QR dinamis Core API. Charge dinamis mengirim header `X-Override-Notification` ke URL yang sama. Server menolak notification yang signature-nya tidak cocok: SHA512 dari `order_id`, `status_code`, `gross_amount`, dan Server Key. Announcement hanya dibuat kalau `transaction_status` bernilai `settlement` dan `fraud_status` bernilai `accept`.
+
+### GoFood
+
+Poller transaksi GoFood mengirim pembayaran baru ke:
+
+```text
+POST /gofood/notification
+Authorization: Bearer <DEVICE_TOKEN>
+```
+
+Body-nya `order_id`, `amount` (rupiah), `payment_type`, `transaction_source`, dan `transaction_status`. Suara dibuat hanya untuk `settlement` atau `capture` dengan tipe `QRIS` atau `GOPAY`. Order delivery dan pickup tidak dibunyikan: `goresto_online`, `goresto_online_pickup`, `go_food_meal_plan`, `gomart_online`, `go_food_affordable`. `order_id` yang sama tidak diumumkan dua kali. Firmware tidak berubah; ESP32 tetap mengambil pengumuman dari `/device/events`.
 
 ### Duitku
 
@@ -121,13 +145,12 @@ Callback dan poll mutasi untuk pembayaran yang sama dihitung satu. Amount yang s
 
 ## Device
 
-Ada tiga firmware. Layar, Wi-Fi, dan poll pembayaran tiap 2 detik sama. Yang beda hanya sumber audionya.
+Layar, Wi-Fi, dan poll pembayaran tiap 2 detik sama di firmware S3. Yang beda hanya sumber audionya.
 
 - `esp32s3` download WAV dari server. Butuh TTS yang hidup.
-- `esp32s3-kata` merangkai kata dari flash. Suaranya Rowosari, file-nya di `firmware/voices/rowosari`. Tidak memanggil TTS.
-- `esp32s3-kata-bank` sama seperti di atas, memakai clip lama di `firmware/bank`.
+- `esp32s3-kata` dan `esp32s3-kata-bank` merangkai kata dari flash. Suaranya `firmware/voices/bank-kata-id`. Tidak memanggil TTS.
 
-Urutannya bunyi koin, "pembayaran diterima", angka, lalu "rupiah". Nama file-nya tetap: `satu.wav`, `seribu.wav`, `rupiah.wav`, dan seterusnya. Codec memutar pada 16 kHz, PCM 16-bit. File yang bukan 16 kHz kedengaran terlalu cepat atau terlalu lambat.
+Urutannya bunyi koin, angka, "rupiah", lalu "diterima". Nama file-nya tetap: `satu.wav`, `seribu.wav`, `rupiah.wav`, dan seterusnya. Codec memutar pada 16 kHz, PCM 16-bit. File yang bukan 16 kHz kedengaran terlalu cepat atau terlalu lambat.
 
 ```bash
 cd firmware
@@ -163,7 +186,29 @@ LIGHT=40
 STATUS
 ```
 
-`VOL` dari 0 (mute) sampai 100. `LIGHT` dari 1 sampai 100.
+`VOL` dari 0 (mute) sampai 100. `LIGHT` dari 1 sampai 100. Di ESP32-C3, `LIGHT` mengatur kontras OLED.
+
+### ESP32-C3
+
+SuperMini dengan OLED SSD1306 128×32 dan amplifier I2S MAX98357. Perangkat ini hanya mengumumkan pembayaran yang masuk. Tidak ada QR dan keypad. Suara dirangkai dari bank kata yang sama, `firmware/voices/bank-kata-id`.
+
+| Fungsi | GPIO |
+|---|---|
+| I2S DIN | 2 |
+| I2S LRC | 3 |
+| I2S BCLK | 4 |
+| OLED SDA | 5 |
+| OLED SCL | 6 |
+| MAX98357 SD | 7, high saat bunyi |
+
+GPIO8, GPIO9, GPIO18, dan GPIO19 tidak dipakai. Amplifier makan 5 V, ground disatukan dengan board.
+
+```bash
+cd firmware
+pio run -e esp32c3 -t upload --upload-port /dev/ttyACM0
+```
+
+`esp32c3` dan `esp32c3-bank` memakai bank kata yang sama. Setup Wi-Fi sama dengan papan S3: portal `qris-speaker` di `http://192.168.4.1`, atau serial `WIFI`, `PASS`, `HOST`, `TOKEN`, lalu `APPLY`.
 
 ### Di kasir
 
@@ -183,21 +228,24 @@ LED di board: kuning saat setup, biru saat QR dinamis menunggu, hijau saat lunas
 
 `http://127.0.0.1:3040/perangkat` mengatur brightness dan volume lewat USB serial. Firmware yang terpasang harus sudah mengenal perintah `VOL` dan `LIGHT`.
 
-## Sandbox Duitku
+## Sandbox
 
-1. `DUITKU_IS_PRODUCTION=false`, pakai merchant code dan API key sandbox.
-2. `DUITKU_PAYMENT_METHOD=SP` untuk QRIS ShopeePay.
-3. Buat nominal di keypad.
-4. Scan QR di layar dengan aplikasi Shopee sandbox.
-5. Setelah callback masuk, speaker mengucapkan nominal, layar menampilkan `Lunas`, lalu kembali ke QR statis.
+QR dinamis Midtrans:
+
+1. `PAYMENT_PROVIDER=midtrans` dan `MIDTRANS_IS_PRODUCTION=false`.
+2. Buat nominal di keypad.
+3. Scan QR di layar dengan aplikasi yang mendukung QRIS sandbox.
+4. Setelah notification `settlement` masuk, speaker mengucapkan nominal, layar menampilkan `Lunas`, lalu kembali ke QR statis.
+
+QR dinamis Duitku memakai `PAYMENT_PROVIDER=duitku`, `DUITKU_IS_PRODUCTION=false`, dan `DUITKU_PAYMENT_METHOD=SP`. Scan dengan aplikasi Shopee sandbox.
 
 QR statis diuji dengan scan isi `STATIC_QR_STRING`. Notification-nya harus sampai ke URL Midtrans di dashboard.
 
 ## Di dalam repo
 
-`backend/src/server.js` menerima callback dan melayani device. `duitku.js`, `midtrans.js`, dan `qiospay.js` masing-masing satu provider. `speech.js` request audio dan mengubah MP3 menjadi WAV mono 16 kHz. `terbilang.js` mengubah angka menjadi kalimat.
+`backend/src/server.js` menerima callback, notifikasi GoFood, dan melayani device. `duitku.js`, `midtrans.js`, dan `qiospay.js` masing-masing satu provider. `speech.js` request audio dan mengubah MP3 menjadi WAV mono 16 kHz. `terbilang.js` mengubah angka menjadi kalimat.
 
-`firmware/src/` layar, touch, Wi-Fi, dan codec ES8311. `firmware/voices/rowosari/` dan `firmware/bank/` clip kata. `firmware/lib/qrcodegen` menggambar QR, library Project Nayuki.
+`firmware/src/` layar, touch, Wi-Fi, dan codec ES8311. `firmware/src/c3/` OLED dan I2S untuk ESP32-C3. `firmware/voices/bank-kata-id/` clip kata yang dipakai firmware kata. `firmware/voices/rowosari/` dan `firmware/bank/` clip lama. `firmware/lib/qrcodegen` menggambar QR, library Project Nayuki.
 
 Test ada di `backend/test/`. `npm test` menjalankannya.
 

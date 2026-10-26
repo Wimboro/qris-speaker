@@ -28,7 +28,7 @@ function below1000(n) {
 }
 
 export function kataParts(amount) {
-  const parts = ["bunyi koin", "pembayaran diterima"];
+  const parts = ["bunyi koin"];
   let rest = amount;
   const scales = [
     [1_000_000_000, "miliar", null],
@@ -43,7 +43,7 @@ export function kataParts(amount) {
     else parts.push(...below1000(quote), word);
   }
   if (rest) parts.push(...below1000(rest));
-  parts.push("rupiah");
+  parts.push("rupiah", "diterima");
   return parts;
 }
 

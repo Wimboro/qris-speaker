@@ -8,4 +8,5 @@ firmware/.voice/
 *.wav
 !firmware/bank/*.wav
 !firmware/voices/rowosari/*.wav
+!firmware/voices/bank-kata-id/*.wav
 video/out/

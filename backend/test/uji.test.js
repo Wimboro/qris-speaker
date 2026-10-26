@@ -4,12 +4,12 @@ import { kataParts, runUji } from "../src/uji.js";
 
 test("urutan kata 24050 dan 123500", () => {
   assert.deepEqual(kataParts(24050), [
-    "bunyi koin", "pembayaran diterima", "dua", "puluh", "empat", "ribu", "lima", "puluh", "rupiah",
+    "bunyi koin", "dua", "puluh", "empat", "ribu", "lima", "puluh", "rupiah", "diterima",
   ]);
   assert.deepEqual(kataParts(123500), [
-    "bunyi koin", "pembayaran diterima", "seratus", "dua", "puluh", "tiga", "ribu", "lima", "ratus", "rupiah",
+    "bunyi koin", "seratus", "dua", "puluh", "tiga", "ribu", "lima", "ratus", "rupiah", "diterima",
   ]);
-  assert.deepEqual(kataParts(1000).slice(2), ["seribu", "rupiah"]);
+  assert.deepEqual(kataParts(1000).slice(1), ["seribu", "rupiah", "diterima"]);
 });
 
 test("uji mengirim callback lalu menunggu speaker", async () => {

@@ -4,7 +4,7 @@ import shutil
 
 NAMES = [
     "koin-krincing.wav",
-    "pembayaran-diterima.wav",
+    "diterima.wav",
     "satu.wav",
     "dua.wav",
     "tiga.wav",

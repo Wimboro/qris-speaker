@@ -4,7 +4,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import express from "express";
 import { openDatabase, rupiah } from "./db.js";
-import { signature, signaturesMatch, signedFields } from "./midtrans.js";
+import { createQrisCharge, signature, signaturesMatch, signedFields } from "./midtrans.js";
 import {
   callbackSignature,
   createQrisInquiry,
@@ -59,7 +59,7 @@ const DUITKU_PRODUCTION = process.env.DUITKU_IS_PRODUCTION === "true";
 const DUITKU_METHOD = process.env.DUITKU_PAYMENT_METHOD || "SP";
 const DUITKU_EMAIL = process.env.DUITKU_EMAIL || "";
 const DUITKU_NAME = process.env.DUITKU_CUSTOMER_NAME || "";
-const PAYMENT_PROVIDER = process.env.PAYMENT_PROVIDER || "duitku";
+const PAYMENT_PROVIDER = process.env.PAYMENT_PROVIDER || "midtrans";
 const QIOSPAY_MERCHANT = process.env.QIOSPAY_MERCHANT_CODE || "";
 const QIOSPAY_KEY = process.env.QIOSPAY_API_KEY || "";
 const QIOSPAY_SECRET = process.env.QIOSPAY_CALLBACK_SECRET || "";
@@ -75,12 +75,14 @@ function requireEnv() {
     if (!QIOSPAY_KEY) missing.push("QIOSPAY_API_KEY");
     if (!QIOSPAY_SECRET) missing.push("QIOSPAY_CALLBACK_SECRET");
     if (!STATIC_QR || !STATIC_QR.includes("5802ID")) missing.push("STATIC_QR_STRING");
-  } else {
+  } else if (PAYMENT_PROVIDER === "duitku") {
     if (!SERVER_KEY) missing.push("MIDTRANS_SERVER_KEY");
     if (!DUITKU_MERCHANT) missing.push("DUITKU_MERCHANT_CODE");
     if (!DUITKU_KEY) missing.push("DUITKU_API_KEY");
     if (!DUITKU_EMAIL) missing.push("DUITKU_EMAIL");
     if (!DUITKU_NAME) missing.push("DUITKU_CUSTOMER_NAME");
+  } else {
+    if (!SERVER_KEY) missing.push("MIDTRANS_SERVER_KEY");
   }
   if (missing.length) {
     console.error(`Variabel env belum diisi: ${missing.join(", ")}`);
@@ -168,18 +170,26 @@ export function createApp(db) {
       return;
     }
     try {
-      const charge = await createQrisInquiry({
-        merchantCode: DUITKU_MERCHANT,
-        apiKey: DUITKU_KEY,
-        isProduction: DUITKU_PRODUCTION,
-        paymentMethod: DUITKU_METHOD,
-        email: DUITKU_EMAIL,
-        customerName: DUITKU_NAME,
-        callbackUrl: `${PUBLIC_BASE}/duitku/callback`,
-        returnUrl: `${PUBLIC_BASE}/duitku/return`,
-        orderId,
-        amount,
-      });
+      const charge = PAYMENT_PROVIDER === "duitku"
+        ? await createQrisInquiry({
+          merchantCode: DUITKU_MERCHANT,
+          apiKey: DUITKU_KEY,
+          isProduction: DUITKU_PRODUCTION,
+          paymentMethod: DUITKU_METHOD,
+          email: DUITKU_EMAIL,
+          customerName: DUITKU_NAME,
+          callbackUrl: `${PUBLIC_BASE}/duitku/callback`,
+          returnUrl: `${PUBLIC_BASE}/duitku/return`,
+          orderId,
+          amount,
+        })
+        : await createQrisCharge({
+          serverKey: SERVER_KEY,
+          isProduction: IS_PRODUCTION,
+          notificationUrl: `${PUBLIC_BASE}/midtrans/notification`,
+          orderId,
+          amount,
+        });
       const ts = nowIso();
       db.prepare(`
         INSERT INTO orders (
@@ -192,7 +202,7 @@ export function createApp(db) {
         order_id: charge.orderId,
         gross_amount: amount,
         qr_string: charge.qrString,
-        qr_url: charge.paymentUrl,
+        qr_url: charge.paymentUrl || charge.qrUrl || "",
         status: "pending",
       });
     } catch (error) {
@@ -356,6 +366,34 @@ export function createApp(db) {
     res.json({ ok: true });
   });
 
+  app.post("/gofood/notification", deviceAuth, async (req, res) => {
+    const orderId = String(req.body?.order_id || "").trim();
+    const amount = rupiah(req.body?.amount);
+    if (!orderId || amount === null || amount < 1) {
+      res.status(400).json({ error: "order_id atau amount tidak valid" });
+      return;
+    }
+    const status = String(req.body?.transaction_status || "").toLowerCase();
+    const payment = String(req.body?.payment_type || "").toUpperCase();
+    const source = String(req.body?.transaction_source || "").toLowerCase();
+    const food = new Set([
+      "goresto_online",
+      "goresto_online_pickup",
+      "go_food_meal_plan",
+      "gomart_online",
+      "go_food_affordable",
+    ]);
+    const announced =
+      (status === "settlement" || status === "capture") &&
+      (payment === "QRIS" || payment === "GOPAY") &&
+      !food.has(source);
+    if (announced) {
+      console.log(`notify ${orderId} ${status} ${amount}`);
+      await announce(db, orderId, amount);
+    }
+    res.json({ ok: true, announced });
+  });
+
   app.post("/qiospay/callback/:secret", async (req, res) => {
     if (PAYMENT_PROVIDER !== "qiospay") {
       res.status(404).json({ error: "tidak ada" });
@@ -453,7 +491,11 @@ if (startedDirectly()) {
       return;
     }
     const midtransMode = IS_PRODUCTION ? "production" : "sandbox";
-    const duitkuMode = DUITKU_PRODUCTION ? "production" : "sandbox";
-    console.log(`qris-speaker mendengar di :${PORT} (midtrans ${midtransMode}, duitku ${duitkuMode})`);
+    if (PAYMENT_PROVIDER === "duitku") {
+      const duitkuMode = DUITKU_PRODUCTION ? "production" : "sandbox";
+      console.log(`qris-speaker mendengar di :${PORT} (midtrans ${midtransMode}, duitku ${duitkuMode})`);
+      return;
+    }
+    console.log(`qris-speaker mendengar di :${PORT} (midtrans ${midtransMode})`);
   });
 }

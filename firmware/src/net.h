@@ -9,7 +9,7 @@ void onLevels(void (*volume)(uint8_t), void (*light)(uint8_t));
 uint8_t volumePercent();
 uint8_t lightPercent();
 void handleSerial();
-void startPortal();
+bool startPortal();
 void portalLoop();
 bool portalActive();
 bool connectWifi();

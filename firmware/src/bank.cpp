@@ -11,7 +11,7 @@
   extern const uint8_t sym##_end[] asm("_binary__voice_" #sym "_wav_end")
 
 CLIP_EXTERN(koin_krincing);
-CLIP_EXTERN(pembayaran_diterima);
+CLIP_EXTERN(diterima);
 CLIP_EXTERN(satu);
 CLIP_EXTERN(dua);
 CLIP_EXTERN(tiga);
@@ -42,7 +42,7 @@ struct Clip {
 
 static const Clip CLIPS[] = {
   {"koin-krincing", koin_krincing_start, koin_krincing_end},
-  {"pembayaran-diterima", pembayaran_diterima_start, pembayaran_diterima_end},
+  {"diterima", diterima_start, diterima_end},
   {"satu", satu_start, satu_end},
   {"dua", dua_start, dua_end},
   {"tiga", tiga_start, tiga_end},
@@ -127,9 +127,9 @@ bool speakAmount(long amount) {
   if (amount < 1 || amount > 999999999999L) return false;
   const char* parts[40];
   int count = pushPart(parts, 0, 40, "koin-krincing");
-  count = pushPart(parts, count, 40, "pembayaran-diterima");
   count += amountParts(amount, parts + count, 40 - count);
   count = pushPart(parts, count, 40, "rupiah");
+  count = pushPart(parts, count, 40, "diterima");
   const uint8_t* clips[40];
   size_t lengths[40];
   for (int i = 0; i < count; i++) {

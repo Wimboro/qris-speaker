@@ -6,6 +6,7 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <esp_heap_caps.h>
+#include <esp_wifi.h>
 
 static Preferences prefs;
 static WebServer server(80);
@@ -183,10 +184,31 @@ static void handleSave() {
   ESP.restart();
 }
 
-void startPortal() {
+static bool openPortal() {
+#if CONFIG_IDF_TARGET_ESP32C3
+  // Daya pancar SuperMini diturunkan supaya regulator tidak jatuh saat AP menyala.
+  WiFi.persistent(false);
+  WiFi.mode(WIFI_OFF);
+  delay(100);
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.setSleep(false);
+  WiFi.setTxPower(WIFI_POWER_8_5dBm);
+  esp_wifi_set_ps(WIFI_PS_NONE);
+  esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT20);
+  IPAddress ip(192, 168, 4, 1);
+  WiFi.softAPConfig(ip, ip, IPAddress(255, 255, 255, 0));
+  if (WiFi.softAP("qris-speaker", nullptr, 6)) return true;
+  delay(200);
+  return WiFi.softAP("qris-speaker", nullptr, 1);
+#else
   WiFi.disconnect(true);
   WiFi.mode(WIFI_AP);
-  WiFi.softAP("qris-speaker");
+  return WiFi.softAP("qris-speaker");
+#endif
+}
+
+bool startPortal() {
+  bool ok = openPortal();
   server.on("/", HTTP_GET, []() { server.send_P(200, "text/html", PORTAL_HTML); });
   server.on("/save", HTTP_POST, handleSave);
   server.onNotFound([]() {
@@ -195,7 +217,8 @@ void startPortal() {
   });
   server.begin();
   apOn = true;
-  Serial.println("Portal http://192.168.4.1  SSID qris-speaker");
+  Serial.println(ok ? "Portal http://192.168.4.1  SSID qris-speaker" : "softAP gagal");
+  return ok;
 }
 
 void portalLoop() {
@@ -211,6 +234,10 @@ bool connectWifi() {
   }
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
+#if CONFIG_IDF_TARGET_ESP32C3
+  WiFi.setTxPower(WIFI_POWER_8_5dBm);
+  esp_wifi_set_ps(WIFI_PS_NONE);
+#endif
   WiFi.begin(cfgSsid.c_str(), cfgPass.c_str());
   uint32_t start = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - start < 20000) {
